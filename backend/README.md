@@ -28,6 +28,9 @@ This is the FastAPI backend module for the capstone project. It runs locally on 
    DATABASE_URL=sqlite:///./local_scans.db
    POSTGRES_URL=postgresql://user:password@cloud-host:5432/db_name
    SYNC_INTERVAL_SECONDS=300
+  ARDUINO_SERIAL_PORT=COM3
+  ARDUINO_BAUD_RATE=115200
+  ARDUINO_TIMEOUT=15
    ```
    *Note: Set `POSTGRES_URL` to empty if testing completely offline without a cloud DB.*
 

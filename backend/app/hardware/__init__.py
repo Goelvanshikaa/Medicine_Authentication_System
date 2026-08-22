@@ -1,0 +1,1 @@
+"""Hardware integrations for the medicine authentication device."""

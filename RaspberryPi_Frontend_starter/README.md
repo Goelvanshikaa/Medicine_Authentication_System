@@ -23,28 +23,11 @@ Before running:
 
 The UI is otherwise ready for the Raspberry Pi monitor workflow.
 
-## CSV input
+## Hardware scan
 
-The scan screen accepts a headerless CSV file with exactly 10 rows and exactly six numeric columns.
-The columns must be ordered as `ch450`, `ch500`, `ch550`, `ch570`, `ch600`, `ch650`.
-
-```csv
-1000,1200,1400,1500,1300,900
-1001,1201,1401,1501,1301,901
-...
-```
-
-Every channel value must be numeric. After validation, the frontend sends the ML service:
-
-```json
-{
-	"readings": [
-		{"ch450": 1000, "ch500": 1200, "ch550": 1400, "ch570": 1500, "ch600": 1300, "ch650": 900}
-	]
-}
-```
-
-The `readings` array contains all 10 CSV rows in their original order.
+Press `START SCAN` to call `/api/scans/hardware-scan`. The backend triggers the
+Arduino over USB, receives ten AS7262 readings, and sends the six spectral
+channels directly to the existing ML inference pipeline.
 
 ## Run
 

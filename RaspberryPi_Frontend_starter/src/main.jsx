@@ -3,28 +3,8 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-const ML_ENDPOINT = import.meta.env.VITE_ML_ENDPOINT || "/api/scans/analyze";
+const HARDWARE_SCAN_ENDPOINT = import.meta.env.VITE_HARDWARE_SCAN_ENDPOINT || "/api/scans/hardware-scan";
 const RESULT_ENDPOINT = import.meta.env.VITE_RESULT_ENDPOINT || "/api/scans";
-const CHANNELS = ["ch450", "ch500", "ch550", "ch570", "ch600", "ch650"];
-
-function parseCsv(text) {
-  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
-  if (lines.length < 10) throw new Error(`CSV must contain at least 10 readings; found ${lines.length}.`);
-  const firstRow = lines[0].split(",").map((value) => value.trim().toLowerCase());
-  const hasHeader = CHANNELS.every((channel) => firstRow.includes(channel));
-  const columnIndexes = hasHeader ? CHANNELS.map((channel) => firstRow.indexOf(channel)) : CHANNELS.map((_, index) => index);
-  const dataLines = (hasHeader ? lines.slice(1) : lines).slice(0, 10);
-  if (dataLines.length < 10) throw new Error(`CSV must contain at least 10 readings; found ${dataLines.length}.`);
-  return dataLines.map((line, rowIndex) => {
-    const values = line.split(",").map((value) => value.trim());
-    if (columnIndexes.some((index) => index >= values.length)) throw new Error(`Row ${rowIndex + 1} is missing a spectral channel.`);
-    return Object.fromEntries(CHANNELS.map((channel, index) => {
-      const value = Number(values[columnIndexes[index]]);
-      if (!Number.isFinite(value)) throw new Error(`Row ${rowIndex + 1} has an invalid numeric value.`);
-      return [channel, value];
-    }));
-  });
-}
 
 function formatTimestamp(value) {
   if (!value) return "Just now";
@@ -59,8 +39,6 @@ function App() {
   const [recentScans, setRecentScans] = useState([]);
   const [error, setError] = useState("");
   const [backendOnline, setBackendOnline] = useState(false);
-  const [csvFile, setCsvFile] = useState(null);
-  const [readings, setReadings] = useState([]);
 
   useEffect(() => { checkHealth(); loadRecentScans(); }, []);
 
@@ -76,23 +54,12 @@ function App() {
     } catch { setRecentScans([]); }
   }
 
-  async function handleCsvChange(event) {
-    const file = event.target.files?.[0];
-    setError(""); setCsvFile(file || null); setReadings([]);
-    if (!file) return;
-    try { setReadings(parseCsv(await file.text())); }
-    catch (err) { setCsvFile(null); setError(err.message || "Unable to read the CSV file."); event.target.value = ""; }
-  }
-
   async function startScan() {
-    if (readings.length !== 10) {
-      setError(`Please upload a CSV with at least 10 valid spectral readings. The file currently has ${readings.length}/10.`);
-      return;
-    }
     setError(""); setResult(null); setStatus("scanning");
     try {
-      const response = await fetch(`${API_BASE}${ML_ENDPOINT}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ readings }) });
+      const response = await fetch(`${API_BASE}${HARDWARE_SCAN_ENDPOINT}`, { method: "POST" });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `Backend returned ${response.status}`);
+      setStatus("processing");
       const normalized = normalizeResult(await response.json());
       setResult(normalized); setRecentScans((scans) => [normalized.scan, ...scans.filter((scan) => scan.scan_id !== normalized.scan?.scan_id)].slice(0, 4)); setStatus("complete"); setScreen("result");
     } catch (err) { setStatus("error"); setError(err.message || "Unable to communicate with the authentication backend."); }
@@ -115,9 +82,8 @@ function App() {
     <header className="topbar"><div className="brand-lockup"><span className="brand-mark">✦</span><div><div className="brand">MedGuard</div><div className="subtitle">MEDICINE AUTHENTICATION</div></div></div><div className="device-pill">Device: PI_001 <span className={backendOnline ? "online" : "offline"}>● {backendOnline ? "Online" : "Offline"}</span></div></header>
     {screen === "scan" && <section className="scan-view">
       <div className="scan-intro"><h1>{status === "scanning" ? "Scanning medicine" : "Ready to Scan"}</h1><p>Place the medicine in the scanner<br />compartment and start scanning.</p></div>
-      <div className={`scan-orbit ${status === "scanning" ? "active" : ""}`}><div className="orbit orbit-one" /><div className="orbit orbit-two" /><button className="scan-trigger" onClick={startScan}><span className="scan-icon">⌁</span><strong>{status === "scanning" ? "SCANNING" : "START SCAN"}</strong></button></div>
-      <div className="scan-input"><label className="upload-button" htmlFor="csv-upload"><span>UPLOAD CSV</span><small>{csvFile ? csvFile.name : "Choose sensor file"}</small></label><input id="csv-upload" type="file" accept=".csv,text/csv" onChange={handleCsvChange} /><span className="reading-count">{readings.length}/10 readings</span></div>
-      {status === "scanning" && <div className="processing"><span /> Capturing spectral signature...</div>}{error && <div className="error">{error}</div>}
+      <div className={`scan-orbit ${status === "scanning" || status === "processing" ? "active" : ""}`}><div className="orbit orbit-one" /><div className="orbit orbit-two" /><button className="scan-trigger" onClick={startScan} disabled={status === "scanning" || status === "processing"}><span className="scan-icon">⌁</span><strong>{status === "scanning" ? "SCANNING" : status === "processing" ? "PROCESSING" : "START SCAN"}</strong></button></div>
+      {(status === "scanning" || status === "processing") && <div className="processing"><span /> {status === "scanning" ? "Capturing spectral signature..." : "Processing authentication result..."}</div>}{error && <div className="error">{error.includes("Arduino") || error.includes("serial") || error.includes("scan incomplete") ? "Unable to communicate with the sensing device. Please check that the Arduino is connected." : error}</div>}
       <div className="scan-facts"><div><b>∿</b><strong>10 Readings</strong><span>Per Scan</span></div><div><b>◷</b><strong>~5 sec</strong><span>Scan Time</span></div><div><b>♢</b><strong>AI + Spectral</strong><span>Analysis</span></div></div>
       <div className="how-it-works"><h2>⌁ &nbsp;How it works</h2><div className="steps"><div><b>1</b><strong>Place Medicine</strong><span>Place the medicine in the scanner compartment</span></div><div><b>2</b><strong>Start Scan</strong><span>Click start and wait while we capture the spectrum.</span></div><div><b>3</b><strong>Get Result</strong><span>View authentication result in the next screen.</span></div></div></div>
     </section>}

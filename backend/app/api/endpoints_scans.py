@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from pathlib import Path
 import sys
+from threading import Lock
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime, timezone
@@ -8,8 +9,16 @@ from app.database.session import get_db
 from app.database.models import Scan
 from app.schemas.schemas import ScanAnalysisRequest, ScanCreate, ScanResponse
 from app.core.config import settings
+from app.hardware.arduino_serial import (
+    ArduinoScanError,
+    ArduinoSerialError,
+    ArduinoTimeoutError,
+    MalformedReadingError,
+    read_hardware_scan,
+)
 
 router = APIRouter()
+hardware_scan_lock = Lock()
 
 
 def run_ml_inference(readings):
@@ -106,6 +115,50 @@ def analyze_scan(payload: ScanAnalysisRequest, db: Session = Depends(get_db)):
     scan = ScanCreate.model_validate(ml_result)
     saved_scan = create_scan(scan, db)
     return {"result": ml_result, "scan": saved_scan}
+
+
+@router.post("/hardware-scan", status_code=201)
+def hardware_scan(db: Session = Depends(get_db)):
+    if not hardware_scan_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="A hardware scan is already in progress.")
+
+    try:
+        try:
+            hardware_readings = read_hardware_scan(
+                port=settings.arduino_serial_port,
+                baud_rate=settings.arduino_baud_rate,
+                timeout=settings.arduino_timeout,
+            )
+        except (ArduinoSerialError, ArduinoTimeoutError) as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        except MalformedReadingError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except ArduinoScanError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        readings = [
+            {channel: reading[channel] for channel in (
+                "ch450", "ch500", "ch550", "ch570", "ch600", "ch650"
+            )}
+            for reading in hardware_readings
+        ]
+
+        try:
+            ml_result = run_ml_inference(readings)
+        except (ImportError, ModuleNotFoundError) as error:
+            raise HTTPException(status_code=503, detail=f"ML dependencies are unavailable: {error}") from error
+        except FileNotFoundError as error:
+            raise HTTPException(status_code=503, detail=f"ML model files are unavailable: {error}") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(status_code=500, detail="ML inference failed.") from error
+
+        scan = ScanCreate.model_validate(ml_result)
+        saved_scan = create_scan(scan, db)
+        return {"result": ml_result, "scan": saved_scan}
+    finally:
+        hardware_scan_lock.release()
 
 @router.get("/", response_model=List[ScanResponse])
 def get_scans(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):

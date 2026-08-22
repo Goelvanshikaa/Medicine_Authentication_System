@@ -5,6 +5,9 @@ from typing import Optional
 class Settings(BaseSettings):
     device_id: str = "PI_001"
     database_url: str = "sqlite:///./local_scans.db"
+    arduino_serial_port: str = "COM3"
+    arduino_baud_rate: int = 115200
+    arduino_timeout: float = 15.0
     postgres_url: Optional[str] = None
     sync_interval_seconds: int = 300
     sync_retry_backoff_seconds: int = 30
